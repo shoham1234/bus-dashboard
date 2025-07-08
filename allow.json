@@ -1,0 +1,38 @@
+{
+  "roles": {
+    "eran,t@haargaz,co,il": {
+      "type": "admin"
+    },
+    "ruslan,k@haargaz,co,il": {
+      "type": "manager",
+      "allowedStations": [0, 1]
+    },
+    "shohamtrabelsi1@gmail,com": {
+      "type": "admin"
+    },
+    "rafikb@haargaz,co,il": {
+      "type": "manager",
+      "allowedStations": [2, 5]
+    },
+    "zion,z@haargaz,co,il": {
+      "type": "manager",
+      "allowedStations": [3, 9]
+    },
+    "slavay@haargaz,co,il": {
+      "type": "manager",
+      "allowedStations": [4]
+    },
+    "simha,zaburov@haargaz,co,il": {
+      "type": "manager",
+      "allowedStations": [6, 7]
+    },
+    "avi,h@haargaz,co,il": {
+      "type": "manager",
+      "allowedStations": [8]
+    },
+    "alex,melnik@haargaz,co,il": {
+      "type": "manager",
+      "allowedStations": [9, 10, 11, 12]
+    }
+  }
+}

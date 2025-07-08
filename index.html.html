@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="he">
+<head>
+<meta charset="UTF-8">
+<title>ניהול ייצור – תחנות מדורגות</title>
+<style>
+  body{font-family:Arial,sans-serif;direction:rtl;padding:20px}
+  input,button{padding:6px;font-size:14px} button:disabled{background:#ccc}
+  table{border-collapse:collapse;width:100%;margin-top:16px}
+  th,td{border:1px solid #333;text-align:center;padding:8px;min-width:120px}
+  td.station{cursor:pointer;transition:background .2s;background:#fff;white-space:pre-line}
+  td.station.locked{background:#eee;cursor:not-allowed}
+  td.station.yellow{background:#ffec8b}
+  td.station.green{background:#8bf58b}
+  /* טקסט קטן בתוך התא */
+  td.station div{font-size:11px;line-height:1.25}
+</style>
+</head>
+<body>
+
+<h1>ניהול ייצור – תחנות מדורגות</h1>
+
+<div id="login">
+  <label>אימייל: <input id="email" type="email"></label>
+  <label>סיסמה: <input id="pass" type="password"></label>
+  <button id="btnLogin">התחבר</button>
+</div>
+
+<div>
+  <span id="userInfo"></span>
+  <button id="btnLogout" style="display:none">התנתק</button>
+</div>
+
+<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:20px">
+  <label>כמות אוטובוסים:<input id="busCount" type="number" min="1" value="5" style="width:60px"></label>
+  <label>קוד סדרה (4 ספרות):<input id="seriesCode" type="text" maxlength="4" style="width:60px"></label>
+  <label>תיאור קצר:<input id="seriesDesc" type="text" style="width:200px"></label>
+  <button id="create">צור סדרה</button>
+</div>
+
+<h3 id="info"></h3>
+
+<table id="tbl">
+  <thead>
+    <tr>
+      <th>#</th><th>מחלקה 5</th><th>השחזה</th><th>צבע יסוד</th><th>מכונאות</th>
+      <th>מחלקה 6</th><th>צבע כללי</th><th>פי.וי.סי</th>
+      <th>מחלקה 10</th><th>בחינת חשמל</th><th>PDI</th>
+      <th>התקנות</th><th>בחינת מכונאות</th><th>הכנה למסירה</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+import {getDatabase,ref,set,onValue,get} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-database.js";
+import {getAuth,signInWithEmailAndPassword,signOut,onAuthStateChanged} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+
+/* ---------- Firebase config (שלך) ---------- */
+const firebaseConfig = {
+  apiKey:"AIzaSyAicmRsqNblcwXtdO8knEr25hbeBUY2oRU",
+  authDomain:"busproduction-5cd45.firebaseapp.com",
+  databaseURL:"https://busproduction-5cd45-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId:"busproduction-5cd45",
+  storageBucket:"busproduction-5cd45.appspot.com",
+  messagingSenderId:"1027219073653",
+  appId:"1:1027219073653:web:8ea641762b1f588b23263c"
+};
+/* ---------- Init ---------- */
+const app = initializeApp(firebaseConfig);
+const db  = getDatabase(app);
+const auth= getAuth(app);
+
+/* ---------- DOM ---------- */
+const email    = document.getElementById('email');
+const pass     = document.getElementById('pass');
+const btnLogin = document.getElementById('btnLogin');
+const btnLogout= document.getElementById('btnLogout');
+const userInfo = document.getElementById('userInfo');
+const body     = document.querySelector('#tbl tbody');
+
+/* ---------- state ---------- */
+let currentUser=null;
+let userRole   ={type:'guest',allowedStations:[]};
+
+const stations=[
+  'מחלקה 5','השחזה','צבע יסוד','מכונאות',
+  'מחלקה 6','צבע כללי','פי.וי.סי',
+  'מחלקה 10','בחינת חשמל','pdi',
+  'התקנות','בחינת מכונאות','הכנה למסירה'
+];
+
+/* ---------- auth UI ---------- */
+btnLogin.onclick=()=>{
+  const e=email.value.trim(),p=pass.value;
+  if(!e||!p)return alert('מלא אימייל וסיסמה');
+  signInWithEmailAndPassword(auth,e,p)
+    .catch(err=>alert('שגיאת התחברות: '+err.message));
+};
+btnLogout.onclick=()=>signOut(auth).catch(console.error);
+
+/* ---------- helpers ---------- */
+function format(ts){
+  /* מציג רק תאריך ושעה קצרים */
+  return new Date(ts).toLocaleString('he-IL',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'});
+}
+
+/* ---------- build / render ---------- */
+function initTable(cnt){
+  body.innerHTML='';
+  for(let i=1;i<=cnt;i++){
+    const tr=document.createElement('tr');
+    let html=`<td>${i}</td>`;
+    stations.forEach((_,idx)=>html+=`<td class="station locked" data-key="b${i}s${idx}"></td>`);
+    tr.innerHTML=html; body.appendChild(tr);
+  }
+  renderTable();
+}
+
+function renderTable(){
+  const data=JSON.parse(localStorage.getItem('st')||'{}');
+  document.querySelectorAll('td.station').forEach(cell=>{
+    const key = cell.dataset.key;
+    const idx = +key.match(/s(\d+)$/)[1];
+    const bus = +key.match(/^b(\d+)/)[1];
+
+    /* תלות בתחנה קודמת */
+    const prev=(()=>{
+      if(idx===8||idx===9) return data[`b${bus}s7`]?.done;
+      if(idx===10)         return data[`b${bus}s8`]?.done && data[`b${bus}s9`]?.done;
+      if(idx===11)         return data[`b${bus}s10`]?.done;
+      return idx===0 || data[`b${bus}s${idx-1}`]?.done;
+    })();
+
+    const allowed = userRole.type==='admin' ||
+                    (userRole.allowedStations||[]).map(Number).includes(idx);
+
+    /* reset classes + content */
+    cell.className=`station${prev&&allowed?'':' locked'}`;
+    cell.innerHTML='';
+
+    const rec=data[key];
+    if(rec){
+      /* קובעים צבע */
+      if(rec.done)   cell.classList.add('green');
+      else           cell.classList.add('yellow');
+
+      /* מכינים תוכן */
+      if(rec.done){
+        cell.innerHTML=`<div>${format(rec.started)}<br>→<br>${format(rec.done)}</div>`;
+      }else{
+        cell.innerHTML=`<div>${format(rec.started)}</div>`;
+      }
+    }
+  });
+}
+
+/* ---------- firebase listeners ---------- */
+onAuthStateChanged(auth,user=>{
+  if(!user){
+    currentUser=null; userRole={type:'guest',allowedStations:[]};
+    userInfo.textContent=''; btnLogin.style.display=''; btnLogout.style.display='none';
+    document.getElementById('login').style.display='';
+    body.innerHTML=''; document.getElementById('info').textContent='';
+    return;
+  }
+
+  currentUser=user;
+  userInfo.textContent=`מחובר כ־${user.email}`;
+  btnLogin.style.display='none'; btnLogout.style.display='inline-block';
+  document.getElementById('login').style.display='none';
+
+  /* roles */
+  const key=user.email.replace(/\./g,',');
+  get(ref(db,'roles/'+key)).then(snap=>{
+    userRole = snap.exists()? snap.val() : {type:'guest',allowedStations:[]};
+    renderTable();
+  });
+
+  /* current series */
+  onValue(ref(db,'currentSeries'),snap=>{
+    const s=snap.val();
+    if(s){
+      document.getElementById('info').textContent=
+        `סדרה ${s.code} – ${s.desc} | ${s.cnt} אוטובוסים`;
+      initTable(s.cnt);
+    }
+  });
+
+  /* stations */
+  onValue(ref(db,'stations'),snap=>{
+    localStorage.setItem('st',JSON.stringify(snap.val()||{}));
+    renderTable();
+  });
+});
+
+/* ---------- create new series ---------- */
+document.getElementById('create').onclick=()=>{
+  if(!currentUser)return alert('צריך להתחבר כדי ליצור סדרה');
+  const cnt=+busCount.value;
+  const code=seriesCode.value.trim(),desc=seriesDesc.value.trim();
+  if(cnt<1||!/^\d{4}$/.test(code)||!desc)return alert('מלא את כל השדות כנדרש.');
+  set(ref(db,'currentSeries'),{cnt,code,desc,createdBy:currentUser.email});
+  set(ref(db,'stations'),{});      // reset statuses
+};
+
+/* ---------- click station ---------- */
+document.getElementById('tbl').addEventListener('click',e=>{
+  const c=e.target.closest('td.station');
+  if(!c||c.classList.contains('locked'))return;
+  const key=c.dataset.key;
+  const data=JSON.parse(localStorage.getItem('st')||'{}');
+  const now=Date.now();            // נשמר כמספר (קל לפורמט)
+  if(!data[key])            data[key]={started:now};
+  else if(!data[key].done)  data[key].done=now;
+  else{
+    if(!confirm('לבטל התחלה/סיום?'))return;
+    delete data[key];
+  }
+  set(ref(db,'stations'),data);
+});
+</script>
+
+</body>
+</html>
